@@ -2,3 +2,4 @@ streamlit
 pillow
 opencv-python
 numpy
+rembg

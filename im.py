@@ -9,14 +9,24 @@ from rembg import remove  # For background removal
 # Custom CSS for styling
 st.markdown("""
     <style>
+        /* Background styling */
+        body {
+            background: linear-gradient(120deg, #ff9a9e 0%, #fad0c4 100%);
+            color: white;
+        }
+        
+        /* Main title styling */
         .main-title {
             text-align: center;
             font-size: 2.5em;
             font-weight: bold;
             color: #4CAF50;
-            margin-top: -50px;
+            margin-top: -20px;
+            margin-bottom: 30px;
             animation: fadeIn 2s;
         }
+
+        /* Button styling */
         .stButton button {
             background-color: #4CAF50;
             color: white;
@@ -24,9 +34,9 @@ st.markdown("""
             border: none;
             padding: 10px;
             font-size: 1em;
-            width: 130px;
+            width: 140px;
             transition: background-color 0.3s ease, transform 0.2s ease;
-            margin-bottom: 15px;
+            margin: 8px;
             display: inline-block;
         }
         .stButton button:hover {
@@ -34,10 +44,14 @@ st.markdown("""
             transform: scale(1.05);
             cursor: pointer;
         }
+
+        /* Fade-in animation for title */
         @keyframes fadeIn {
             from { opacity: 0; }
             to { opacity: 1; }
         }
+
+        /* Download button styling */
         .download-button {
             display: flex;
             justify-content: center;
@@ -127,7 +141,7 @@ if uploaded_file is not None:
     saturation_value = st.slider("Saturation", 0.1, 2.0, 1.0)
     watermark_text = st.text_input("Enter watermark text")
 
-    # Simplified Button Labels in Separate Columns
+    # Button Layout in a Horizontal Line
     col1, col2, col3, col4, col5, col6 = st.columns(6)
     with col1:
         if st.button("Apply"):
