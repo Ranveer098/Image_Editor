@@ -3,6 +3,7 @@ from PIL import Image, ImageDraw
 import numpy as np
 import io
 import base64
+from sklearn.cluster import KMeans
 
 # Set page config
 st.set_page_config(page_title="Advanced Image Editor", page_icon="🖌️", layout="centered")
@@ -17,7 +18,7 @@ if uploaded_file is not None:
     original_image = Image.open(uploaded_file).convert("RGB")
     modified_image = original_image.copy()
 
-    st.image(original_image, caption="Original Image", use_container_width=True)
+    # st.image(original_image, caption="Original Image", use_container_width=True)
 
     # Helper functions
     def pil_to_np(image):
@@ -48,14 +49,79 @@ if uploaded_file is not None:
         edges = (edges / edges.max()) * 255
         return Image.fromarray(edges.astype(np.uint8))
 
-    def remove_background(image):
-        img_np = pil_to_np(image)
-        # Simplified k-means-based color clustering
+
+    from scipy.ndimage import label
+
+
+    def refine_mask_with_connected_components(mask):
+        # Label connected components in the mask
+        labeled_mask, num_features = label(mask)
+
+        # Measure the size of each connected component
+        component_sizes = np.bincount(labeled_mask.ravel())
+
+        # Ignore the background component (label 0)
+        largest_component_label = np.argmax(component_sizes[1:]) + 1
+
+        # Create a refined mask that keeps only the largest connected component
+        refined_mask = (labeled_mask == largest_component_label)
+
+        return refined_mask
+
+
+    def advanced_remove_background_with_refinement(image, n_clusters=3):
+        # Convert image to numpy array
+        img_np = np.array(image)
+        h, w, c = img_np.shape
+
+        # Reshape the image into a 2D array of pixels
         pixels = img_np.reshape(-1, 3)
-        background_color = pixels[np.argmax(np.bincount(pixels[:, 0]))]  # Mode color
-        mask = np.all(np.abs(img_np - background_color) < 30, axis=-1)  # Threshold tolerance
-        img_np[mask] = [0, 0, 0]  # Replace background with black
-        return np_to_pil(img_np)
+
+        # Apply K-Means clustering to segment the colors
+        kmeans = KMeans(n_clusters=n_clusters, random_state=0)
+        labels = kmeans.fit_predict(pixels)
+
+        # Identify the cluster with the most pixels (assumed to be the background)
+        unique_labels, counts = np.unique(labels, return_counts=True)
+        background_label = unique_labels[np.argmax(counts)]
+
+        # Create an initial mask for the background
+        mask = (labels == background_label).reshape(h, w)
+
+        # Refine the mask by keeping only the largest connected component
+        refined_mask = refine_mask_with_connected_components(mask)
+
+        # Apply the refined mask to remove the background
+        img_np[refined_mask] = [0, 0, 0]
+
+        # Convert back to PIL Image
+        return Image.fromarray(img_np)
+
+
+    def remove_background(image):
+        # Convert image to numpy array
+        img_np = np.array(image)
+        h, w, c = img_np.shape
+
+        # Reshape the image into a 2D array of pixels
+        pixels = img_np.reshape(-1, 3)
+
+        # Apply K-Means clustering to segment the colors
+        kmeans = KMeans(n_clusters=3, random_state=0)
+        labels = kmeans.fit_predict(pixels)
+
+        # Identify the cluster with the most pixels (assumed to be the background)
+        unique_labels, counts = np.unique(labels, return_counts=True)
+        background_label = unique_labels[np.argmax(counts)]
+
+        # Create a mask for the background
+        mask = (labels == background_label).reshape(h, w)
+
+        # Set background pixels to black
+        img_np[mask] = [0, 0, 0]
+
+        # Convert back to PIL Image
+        return Image.fromarray(img_np)
 
     def blur_image(image, blur_radius):
         img_np = pil_to_np(image)
@@ -148,7 +214,7 @@ if uploaded_file is not None:
         modified_image = sharpen_image(modified_image)
 
     if remove_bg:
-        modified_image = remove_background(modified_image)
+        modified_image = advanced_remove_background_with_refinement(modified_image)
 
     if sepia:
         modified_image = apply_sepia(modified_image)
@@ -158,9 +224,15 @@ if uploaded_file is not None:
 
     if reset:
         modified_image = original_image.copy()
+        # Display original and modified images side by side
 
-    # Display modified image
-    st.image(modified_image, caption="Modified Image", use_container_width=True)
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.image(original_image, caption="Original Image", use_container_width=True)
+
+    with col2:
+        st.image(modified_image, caption="Edited Image", use_container_width=True)
 
     # Download button
     buffer = io.BytesIO()
