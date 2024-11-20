@@ -4,12 +4,16 @@ import numpy as np
 import io
 import base64
 from sklearn.cluster import KMeans
+from scipy.ndimage import label
+from PIL import ImageFont, ImageDraw
 
 # Set page config
-st.set_page_config(page_title="Advanced Image Editor", page_icon="🖌️", layout="centered")
+st.set_page_config(page_title="Advanced Image Editor", page_icon="🖌", layout="centered")
 
 # Title
-st.title("🖌️ Advanced Image Editor")
+st.title("🖌 Advanced Image Editor")
+
+
 
 # File upload
 uploaded_file = st.file_uploader("Upload an image:", type=["jpg", "png", "jpeg"])
@@ -18,14 +22,14 @@ if uploaded_file is not None:
     original_image = Image.open(uploaded_file).convert("RGB")
     modified_image = original_image.copy()
 
-    # st.image(original_image, caption="Original Image", use_container_width=True)
-
     # Helper functions
     def pil_to_np(image):
         return np.array(image)
 
     def np_to_pil(image_np):
         return Image.fromarray(np.clip(image_np, 0, 255).astype(np.uint8))
+
+    # st.image(original_image, caption="Original Image", use_container_width=True)
 
     # Image Processing Functions
     def crop_image(image, top, bottom, left, right):
@@ -45,12 +49,11 @@ if uploaded_file is not None:
         sobel_y = sobel_x.T
         edges_x = np.abs(np.convolve(gray.flatten(), sobel_x.flatten(), mode="same").reshape(gray.shape))
         edges_y = np.abs(np.convolve(gray.flatten(), sobel_y.flatten(), mode="same").reshape(gray.shape))
-        edges = np.sqrt(edges_x**2 + edges_y**2)
+        edges = np.sqrt(edges_x*2 + edges_y*2)
         edges = (edges / edges.max()) * 255
         return Image.fromarray(edges.astype(np.uint8))
 
 
-    from scipy.ndimage import label
 
 
     def refine_mask_with_connected_components(mask):
@@ -123,10 +126,21 @@ if uploaded_file is not None:
         # Convert back to PIL Image
         return Image.fromarray(img_np)
 
+
     def blur_image(image, blur_radius):
         img_np = pil_to_np(image)
-        kernel = np.ones((blur_radius, blur_radius)) / (blur_radius**2)
-        blurred = np.convolve(img_np.flatten(), kernel.flatten(), mode="same").reshape(img_np.shape)
+        kernel = np.ones((blur_radius, blur_radius)) / (blur_radius ** 2)
+        blurred = np.zeros_like(img_np, dtype=np.float32)
+
+        # Apply the convolution for each color channel separately
+        for i in range(3):
+            blurred[..., i] = np.convolve(
+                img_np[..., i].flatten(), kernel.flatten(), mode="same"
+            ).reshape(img_np[..., i].shape)
+
+        # Clip values to the valid range [0, 255] and convert back to uint8
+        blurred = np.clip(blurred, 0, 255).astype(np.uint8)
+
         return np_to_pil(blurred)
 
 
@@ -165,11 +179,69 @@ if uploaded_file is not None:
         img_np = pil_to_np(image)
         rows, cols, _ = img_np.shape
         x, y = np.meshgrid(np.linspace(-1, 1, cols), np.linspace(-1, 1, rows))
-        vignette_mask = np.sqrt(x**2 + y**2)
+        vignette_mask = np.sqrt(x*2 + y*2)
         vignette_mask = 1 - vignette_mask / np.max(vignette_mask)
         vignette_mask = np.clip(vignette_mask, 0, 1)
         vignette_img = img_np * vignette_mask[:, :, np.newaxis]
         return np_to_pil(vignette_img)
+
+
+    def apply_watermark(image, text, font_size=50, opacity=128):
+        """
+        Applies a watermark in a tiled pattern over the entire image.
+
+        Parameters:
+        - image (PIL.Image): The image to which the watermark will be applied.
+        - text (str): The watermark text.
+        - font_size (int): The size of the watermark text.
+        - opacity (int): The opacity of the watermark (0 to 255).
+
+        Returns:
+        - PIL.Image: The image with the watermark applied.
+        """
+        # Convert the image to a NumPy array
+        img_np = np.array(image)
+
+        # Create a blank image for the watermark (RGBA)
+        watermark = Image.new("RGBA", (image.width, image.height), (0, 0, 0, 0))
+
+        # Load font
+        try:
+            font = ImageFont.truetype("arial.ttf", font_size)
+        except IOError:
+            font = ImageFont.load_default()
+
+        # Create a drawing context for the watermark
+        draw = ImageDraw.Draw(watermark)
+
+        # Calculate text bounding box
+        text_bbox = font.getbbox(text)
+        text_width = text_bbox[2] - text_bbox[0]
+        text_height = text_bbox[3] - text_bbox[1]
+
+        # Tile the watermark text across the entire image
+        for y in range(0, image.height, text_height + 20):  # Adjust vertical spacing
+            for x in range(0, image.width, text_width + 20):  # Adjust horizontal spacing
+                draw.text((x, y), text, font=font, fill=(255, 255, 255, opacity))
+
+        # Convert the watermark to a NumPy array
+        watermark_np = np.array(watermark)
+
+        # Blend the watermark with the original image
+        if img_np.shape[2] == 3:  # RGB image
+            img_np = np.dstack([img_np, np.full((img_np.shape[0], img_np.shape[1]), 255, dtype=np.uint8)])
+
+        # Blend the watermark
+        alpha = watermark_np[..., 3:] / 255.0  # Extract alpha channel and normalize
+        img_with_watermark = img_np.astype(float) * (1 - alpha) + watermark_np.astype(float) * alpha
+
+        # Convert back to uint8 and remove alpha channel if necessary
+        img_with_watermark = np.clip(img_with_watermark, 0, 255).astype(np.uint8)
+        img_with_watermark = img_with_watermark[..., :3]  # Drop alpha channel for final output
+
+        # Convert back to PIL image
+        return Image.fromarray(img_with_watermark)
+
 
     # Sidebar Controls
     st.sidebar.header("Adjustments")
@@ -192,6 +264,11 @@ if uploaded_file is not None:
     remove_bg = st.sidebar.button("Remove Background")
     sepia = st.sidebar.button("Apply Sepia")
     vignette = st.sidebar.button("Apply Vignette")
+
+    st.sidebar.header("Save & Watermark")
+    watermark_text = st.sidebar.text_input("Watermark Text", "Your Watermark")
+    apply_watermark_btn = st.sidebar.button("Apply Watermark")
+    save_changes = st.sidebar.button("Save Changes")
     reset = st.sidebar.button("Reset")
 
     # Apply transformations
@@ -222,10 +299,16 @@ if uploaded_file is not None:
     if vignette:
         modified_image = apply_vignette(modified_image)
 
+    if apply_watermark_btn:
+        modified_image = apply_watermark(modified_image, watermark_text)
+
+    if save_changes:
+        st.session_state.saved_image = modified_image.copy()
     if reset:
         modified_image = original_image.copy()
-        # Display original and modified images side by side
+        st.session_state.saved_image = original_image.copy()
 
+    # Display original and modified images side by side
     col1, col2 = st.columns(2)
 
     with col1:
@@ -236,13 +319,13 @@ if uploaded_file is not None:
 
     # Download button
     buffer = io.BytesIO()
-    modified_image.save(buffer, format="PNG")
     buffer.seek(0)
     b64 = base64.b64encode(buffer.getvalue()).decode()
     st.markdown(f"""
-    <a href="data:image/png;base64,{b64}" download="modified_image.png">
+    <a href="data:image/png;base64,{b64}" download="saved_image.png">
         <button>Download Image</button>
     </a>
     """, unsafe_allow_html=True)
+
 else:
     st.info("Upload an image to begin editing!")
